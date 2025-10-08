@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Lluvia y Rayos — Animación con Sonido</title>
+  <style>
+    html,body{height:100%;margin:0}
+    body{
+      background: linear-gradient(#08121f, #0b2333 60%, #061623);
+      overflow:hidden;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+      color:#fff;
+    }
+    #container{position:relative;width:100%;height:100%}
+    canvas{display:block;position:absolute;left:0;top:0}
+    .ui{
+      position:fixed;right:12px;top:12px;background:rgba(0,0,0,0.35);backdrop-filter:blur(4px);
+      padding:8px 10px;border-radius:10px;font-size:13px;
+    }
+    .ui label{display:flex;align-items:center;gap:8px}
+    .ui input[type=range]{width:120px}
+    .credit{position:fixed;left:12px;bottom:12px;font-size:12px;opacity:.7}
+  </style>
+</head>
+<body>
+  <div id="container">
+    <canvas id="rain"></canvas>
+    <canvas id="bolt"></canvas>
+  </div>
+
+  <div class="ui">
+    <label>Intensidad lluvia <input id="density" type="range" min="0" max="1" step="0.01" value="0.6"></label>
+    <label>Velocidad <input id="speed" type="range" min="0.2" max="3" step="0.05" value="1"></label>
+    <label>Volumen sonido <input id="volume" type="range" min="0" max="1" step="0.01" value="0.5"></label>
+  </div>
+  <div class="credit">Animación: lluvia y rayos con sonido ambiente</div>
+
+  <!-- Sonido de lluvia (loop) -->
+  <audio id="rainSound" loop>
+    <source src="https://cdn.pixabay.com/download/audio/2021/10/18/audio_4e012b1439.mp3?filename=rain-ambient-loop-12573.mp3" type="audio/mpeg">
+  </audio>
+
+  <script>
+  (function(){
+    const rainCanvas = document.getElementById('rain');
+    const boltCanvas = document.getElementById('bolt');
+    const container = document.getElementById('container');
+    const ctxR = rainCanvas.getContext('2d');
+    const ctxB = boltCanvas.getContext('2d');
+
+    const densityCtrl = document.getElementById('density');
+    const speedCtrl = document.getElementById('speed');
+    const volumeCtrl = document.getElementById('volume');
+
+    const rainSound = document.getElementById('rainSound');
+
+    // Iniciar sonido al primer clic (restricciones del navegador)
+    document.body.addEventListener('click', ()=>{
+      if(rainSound.paused){
+        rainSound.volume = volumeCtrl.value;
+        rainSound.play();
+      }
+    }, { once:true });
+
+    volumeCtrl.addEventListener('input', ()=>{
+      rainSound.volume = volumeCtrl.value;
+    });
+
+    let DPR = Math.max(window.devicePixelRatio || 1, 1);
+
+    function resize(){
+      DPR = Math.max(window.devicePixelRatio || 1, 1);
+      rainCanvas.width = boltCanvas.width = Math.floor(container.clientWidth * DPR);
+      rainCanvas.height = boltCanvas.height = Math.floor(container.clientHeight * DPR);
+      rainCanvas.style.width = boltCanvas.style.width = container.clientWidth + 'px';
+      rainCanvas.style.height = boltCanvas.style.height = container.clientHeight + 'px';
+      ctxR.setTransform(DPR,0,0,DPR,0,0);
+      ctxB.setTransform(DPR,0,0,DPR,0,0);
+    }
+
+    window.addEventListener('resize', resize);
+    resize();
+
+    const drops = [];
+    const baseCount = 400;
+
+    function makeDrop(i){
+      const w = container.clientWidth;
+      const h = container.clientHeight;
+      const z = Math.random()*0.9 + 0.1;
+      return {
+        x: Math.random()*w,
+        y: Math.random()*h - h,
+        l: (6 + Math.random()*14) * z,
+        xs: (-0.5 + Math.random()*1.0) * (0.4 + z*1.6),
+        ys: (4 + Math.random()*10) * (0.5 + z),
+        z: z,
+        life: Math.random()*100
+      }
+    }
+
+    function populate(){
+      drops.length = 0;
+      const density = Number(densityCtrl.value);
+      const count = Math.max(20, Math.floor(baseCount * density));
+      for(let i=0;i<count;i++) drops.push(makeDrop(i));
+    }
+
+    densityCtrl.addEventListener('input', populate);
+    populate();
+
+    let nextBolt = randRange(2000, 7000);
+    let lastBolt = performance.now();
+    const bolts = [];
+
+    function randRange(a,b){return a + Math.random()*(b-a)}
+
+    function createBolt(){
+      const w = container.clientWidth;
+      const h = container.clientHeight;
+      const xStart = Math.random()*w;
+      const segments = 6 + Math.floor(Math.random()*6);
+      const points = [{x:xStart,y:0}];
+      for(let i=1;i<=segments;i++){
+        const px = points[i-1].x + randRange(-w*0.12,w*0.12);
+        const py = (i/segments)*h*(0.85 + Math.random()*0.25);
+        points.push({x:Math.max(0,Math.min(w,px)), y:py});
+      }
+      bolts.push({points, alpha:1, life:0, maxLife:180 + Math.random()*120});
+      flash = 0.8 + Math.random()*0.6;
+      nextBolt = randRange(1500, 9000);
+      lastBolt = performance.now();
+    }
+
+    let flash = 0;
+
+    function update(dt){
+      const speedFactor = Number(speedCtrl.value);
+      const w = container.clientWidth;
+      const h = container.clientHeight;
+      for(let i=0;i<drops.length;i++){
+        const d = drops[i];
+        d.x += d.xs * dt * 0.06 * speedFactor;
+        d.y += d.ys * dt * 0.06 * speedFactor;
+        d.life += dt;
+        if(d.y > h + d.l || d.x < -50 || d.x > w + 50){
+          drops[i] = makeDrop(i);
+          drops[i].y = -10 - Math.random()*h*0.3;
+        }
+      }
+
+      for(let i=bolts.length-1;i>=0;i--){
+        const b = bolts[i];
+        b.life += dt;
+        b.alpha = 1 - (b.life / b.maxLife);
+        if(b.life > b.maxLife) bolts.splice(i,1);
+      }
+
+      if(flash>0) flash = Math.max(0, flash - dt*0.01);
+
+      if(performance.now() - lastBolt > nextBolt){
+        if(Math.random() < 0.85) createBolt();
+        else nextBolt = randRange(1000,8000), lastBolt = performance.now();
+      }
+    }
+
+    function drawRain(){
+      const w = rainCanvas.width / DPR;
+      const h = rainCanvas.height / DPR;
+      ctxR.clearRect(0,0,w,h);
+      ctxR.save();
+      ctxR.globalCompositeOperation = 'lighter';
+
+      for(let i=0;i<drops.length;i++){
+        const d = drops[i];
+        const x = d.x; const y = d.y;
+        const len = d.l;
+        const width = 1 + d.z*1.6;
+        ctxR.beginPath();
+        ctxR.moveTo(x - d.xs*0.6, y - len*0.1);
+        ctxR.lineTo(x + d.xs*0.6, y + len);
+        ctxR.lineWidth = width;
+        const g = ctxR.createLinearGradient(x,y,x,y+len);
+        g.addColorStop(0,'rgba(180,200,255,' + (0.15 + d.z*0.6) + ')');
+        g.addColorStop(1,'rgba(130,160,200,' + (0.04 + d.z*0.25) + ')');
+        ctxR.strokeStyle = g;
+        ctxR.stroke();
+      }
+
+      ctxR.globalCompositeOperation = 'source-over';
+      ctxR.restore();
+    }
+
+    function drawBolts(){
+      const w = boltCanvas.width / DPR;
+      const h = boltCanvas.height / DPR;
+      ctxB.clearRect(0,0,w,h);
+
+      if(flash > 0.01){
+        ctxB.fillStyle = 'rgba(255,255,255,'+ (flash*0.25) +')';
+        ctxB.fillRect(0,0,w,h);
+      }
+
+      for(const b of bolts){
+        ctxB.save();
+        ctxB.globalAlpha = Math.min(1, b.alpha*1.2);
+        ctxB.lineWidth = 2.4 + Math.random()*1.6;
+        ctxB.shadowBlur = 20 + Math.random()*40;
+        ctxB.shadowColor = 'rgba(200,240,255,0.9)';
+        ctxB.strokeStyle = 'rgba(230,240,255,0.95)';
+
+        ctxB.beginPath();
+        const pts = b.points;
+        ctxB.moveTo(pts[0].x, pts[0].y);
+        for(let i=1;i<pts.length;i++){
+          const p = pts[i];
+          ctxB.lineTo(p.x + randRange(-6,6), p.y + randRange(-4,4));
+        }
+        ctxB.stroke();
+
+        const forks = Math.floor(1 + Math.random()*3);
+        for(let f=0; f<forks; f++){
+          const idx = 1 + Math.floor(Math.random()*(pts.length-2));
+          const origin = pts[idx];
+          ctxB.beginPath();
+          ctxB.moveTo(origin.x, origin.y);
+          const fx = origin.x + randRange(-80,80);
+          const fy = origin.y + randRange(30,180);
+          ctxB.lineTo(fx, fy);
+          ctxB.lineWidth = 1 + Math.random()*1.6;
+          ctxB.stroke();
+        }
+
+        ctxB.restore();
+      }
+    }
+
+    let last = performance.now();
+    function loop(now){
+      const dt = Math.min(60, now - last);
+      last = now;
+      update(dt);
+      drawRain();
+      drawBolts();
+      requestAnimationFrame(loop);
+    }
+    requestAnimationFrame(loop);
+  })();
+  </script>
+</body>
+</html>
